@@ -175,6 +175,13 @@ include_directories(
 #   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 # )
 
+catkin_install_python(PROGRAMS
+scripts/ntripclient.py
+DESTIMATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+install(DIRECTORY launch
+DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+
 #############
 ## Testing ##
 #############
