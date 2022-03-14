@@ -4,8 +4,9 @@ import rospy
 from datetime import datetime
 
 #from nmea_msgs.msg import Sentence
-from rtcm_msgs.msg import Message
+from mavros_msgs.msg import RTCM
 
+import datetime
 from base64 import b64encode
 from threading import Thread
 
@@ -15,6 +16,8 @@ from httplib import IncompleteRead
 ''' This is to fix the IncompleteRead error
     http://bobrochel.blogspot.com/2010/11/bad-servers-chunked-encoding-and.html'''
 import httplib
+
+
 def patch_http_response_read(func):
     def inner(*args):
         try:
@@ -22,7 +25,10 @@ def patch_http_response_read(func):
         except httplib.IncompleteRead, e:
             return e.partial
     return inner
+
+
 httplib.HTTPResponse.read = patch_http_response_read(httplib.HTTPResponse.read)
+
 
 class ntripconnect(Thread):
     def __init__(self, ntc):
@@ -39,11 +45,15 @@ class ntripconnect(Thread):
             'Authorization': 'Basic ' + b64encode(self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass))
         }
         connection = HTTPConnection(self.ntc.ntrip_server)
-        connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga, headers)
+        now = datetime.datetime.utcnow()
+        connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
+                           (now.hour, now.minute, now.second), headers)
+
         response = connection.getresponse()
-        if response.status != 200: raise Exception("blah")
+        if response.status != 200:
+            raise Exception("blah")
         buf = ""
-        rmsg = Message()
+        rmsg = RTCM()
         restart_count = 0
         while not self.stop:
             '''
@@ -69,7 +79,7 @@ class ntripconnect(Thread):
                     data = response.read(2)
                     buf += data
                     typ = (ord(data[0]) * 256 + ord(data[1])) / 16
-                    print (str(datetime.now()), cnt, typ)
+                    print(str(datetime.now()), cnt, typ)
                     cnt = cnt + 1
                     for x in range(cnt):
                         data = response.read(1)
@@ -79,25 +89,29 @@ class ntripconnect(Thread):
                     rmsg.header.stamp = rospy.get_rostime()
                     self.ntc.pub.publish(rmsg)
                     buf = ""
-                else: print (data)
+                else:
+                    print(data)
             else:
                 ''' If zero length data, close connection and reopen it '''
                 restart_count = restart_count + 1
                 print("Zero length ", restart_count)
                 connection.close()
                 connection = HTTPConnection(self.ntc.ntrip_server)
-                connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga, headers)
+                connection.request(
+                    'GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga, headers)
                 response = connection.getresponse()
-                if response.status != 200: raise Exception("blah")
+                if response.status != 200:
+                    raise Exception("blah")
                 buf = ""
 
         connection.close()
+
 
 class ntripclient:
     def __init__(self):
         rospy.init_node('ntripclient', anonymous=True)
 
-        self.rtcm_topic = rospy.get_param('~rtcm_topic', 'rtcm')
+        self.rtcm_topic = rospy.get_param('~rtcm_topic')
         self.nmea_topic = rospy.get_param('~nmea_topic', 'nmea')
 
         self.ntrip_server = rospy.get_param('~ntrip_server')
@@ -106,7 +120,7 @@ class ntripclient:
         self.ntrip_stream = rospy.get_param('~ntrip_stream')
         self.nmea_gga = rospy.get_param('~nmea_gga')
 
-        self.pub = rospy.Publisher(self.rtcm_topic, Message, queue_size=10)
+        self.pub = rospy.Publisher(self.rtcm_topic, RTCM, queue_size=10)
 
         self.connection = None
         self.connection = ntripconnect(self)
@@ -117,7 +131,7 @@ class ntripclient:
         if self.connection is not None:
             self.connection.stop = True
 
+
 if __name__ == '__main__':
     c = ntripclient()
     c.run()
-
