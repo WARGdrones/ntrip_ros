@@ -3,7 +3,7 @@
 import rospy
 from datetime import datetime
 
-#from nmea_msgs.msg import Sentence
+# from nmea_msgs.msg import Sentence
 from mavros_msgs.msg import RTCM
 
 from base64 import b64encode
@@ -53,7 +53,7 @@ class ntripconnect(Thread):
 
         response = connection.getresponse()
         if response.status != 200:
-            raise Exception("blah")
+            raise Exception("Error: Response not HTTP200 (OK)")
         buf = bytes()
         rmsg = RTCM()
         restart_count = 0
@@ -99,12 +99,13 @@ class ntripconnect(Thread):
                 rospy.logwarn("Zero length ", restart_count)
                 connection.close()
                 connection = HTTPConnection(self.ntc.ntrip_server)
-                connection.request(
-                    'GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga, headers)
+                now = datetime.datetime.utcnow()
+                connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
+                                   (now.hour, now.minute, now.second), headers)
                 response = connection.getresponse()
                 if response.status != 200:
-                    raise Exception("blah")
-                buf = ""
+                    raise Exception("Error: Response not HTTP200 (OK)")
+                buf = bytes()
 
         connection.close()
 
