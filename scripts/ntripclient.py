@@ -6,28 +6,30 @@ from datetime import datetime
 #from nmea_msgs.msg import Sentence
 from mavros_msgs.msg import RTCM
 
-import datetime
 from base64 import b64encode
 from threading import Thread
 
-from httplib import HTTPConnection
-from httplib import IncompleteRead
+from http.client import HTTPConnection
+from http.client import IncompleteRead
+
+import time
 
 ''' This is to fix the IncompleteRead error
     http://bobrochel.blogspot.com/2010/11/bad-servers-chunked-encoding-and.html'''
-import httplib
+import http.client
 
 
 def patch_http_response_read(func):
     def inner(*args):
         try:
             return func(*args)
-        except httplib.IncompleteRead, e:
+        except http.client.IncompleteRead as e:
             return e.partial
     return inner
 
 
-httplib.HTTPResponse.read = patch_http_response_read(httplib.HTTPResponse.read)
+http.client.HTTPResponse.read = patch_http_response_read(
+    http.client.HTTPResponse.read)
 
 
 class ntripconnect(Thread):
@@ -42,7 +44,7 @@ class ntripconnect(Thread):
             'Ntrip-Version': 'Ntrip/2.0',
             'User-Agent': 'NTRIP ntrip_ros',
             'Connection': 'close',
-            'Authorization': 'Basic ' + b64encode(self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass))
+            'Authorization': 'Basic ' + b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode("utf-8")).decode("utf-8")
         }
         connection = HTTPConnection(self.ntc.ntrip_server)
         now = datetime.datetime.utcnow()
@@ -52,7 +54,7 @@ class ntripconnect(Thread):
         response = connection.getresponse()
         if response.status != 200:
             raise Exception("blah")
-        buf = ""
+        buf = bytes()
         rmsg = RTCM()
         restart_count = 0
         while not self.stop:
@@ -71,14 +73,14 @@ class ntripconnect(Thread):
             ''' This now separates individual RTCM messages and publishes each one on the same topic '''
             data = response.read(1)
             if len(data) != 0:
-                if ord(data[0]) == 211:
+                if data[0] == 211:
                     buf += data
                     data = response.read(2)
                     buf += data
-                    cnt = ord(data[0]) * 256 + ord(data[1])
+                    cnt = data[0] * 256 + data[1]
                     data = response.read(2)
                     buf += data
-                    typ = (ord(data[0]) * 256 + ord(data[1])) / 16
+                    typ = (data[0] * 256 + data[1]) / 16
                     print(str(datetime.now()), cnt, typ)
                     cnt = cnt + 1
                     for x in range(cnt):
@@ -88,13 +90,13 @@ class ntripconnect(Thread):
                     rmsg.header.seq += 1
                     rmsg.header.stamp = rospy.get_rostime()
                     self.ntc.pub.publish(rmsg)
-                    buf = ""
+                    buf = bytes()
                 else:
                     print(data)
             else:
                 ''' If zero length data, close connection and reopen it '''
                 restart_count = restart_count + 1
-                print("Zero length ", restart_count)
+                rospy.logwarn("Zero length ", restart_count)
                 connection.close()
                 connection = HTTPConnection(self.ntc.ntrip_server)
                 connection.request(
