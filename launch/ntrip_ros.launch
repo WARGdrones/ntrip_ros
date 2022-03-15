@@ -2,12 +2,15 @@
 
 <launch>
   <node pkg="ntrip_ros" type="ntripclient.py" name="ntrip_ros" output="screen">
- 	 <param name="rtcm_topic" value="/rtcm"/>
+ 	 <param name="rtcm_topic" value="mavros/gps_rtk/send_rtcm"/>
  	 <param name="ntrip_server" value="URL:PORT"/>
  	 <param name="ntrip_user" value="USER"/>
  	 <param name="ntrip_pass" value="PASS"/>
  	 <param name="ntrip_stream" value="MOUNTPOINT"/>
- 	 <param name="nmea_gga" value="$GPGGA,..."/>
+	  <!-- TODO: Get all of this data from env  -->
+ 	 <param name="latitude" default="29.5" />
+	 <param name="longitude" default="-95.0" />
+	 <param name="altitude" default="10" />
   </node>
 </launch>
 
