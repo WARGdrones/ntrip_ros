@@ -15,3 +15,9 @@ I intend to use it with https://github.com/ros-agriculture/ublox_f9p
 It may also require this package: https://github.com/tilk/rtcm_msgs
 
 A similar NTRIP client (may be better than mine) is here: https://github.com/dayjaby/ntrip_ros
+
+# updated by WARGdrones by merging all relevant forks together
+- based on https://github.com/ros-agriculture/ntrip_ros with better error handling
+- merged https://github.com/dayjaby/ntrip_ros to only use mavros builtin messages
+- python3 changes from https://github.com/Autonabit/ntrip_ros
+- calculating GGA message instead of using a fixed one: https://github.com/duwke/ntrip_ros/
