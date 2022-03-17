@@ -99,19 +99,15 @@ class NtripConnect(Thread):
     def run(self):
         # print(self.ntc.ntrip_user)
         # print(self.ntc.ntrip_pass)
-        headers = {
-            'Ntrip-Version': 'Ntrip/2.0',
-            'User-Agent': 'NTRIP ntrip_ros',
-            'Connection': 'close',
-            # 'Authorization': 'Basic ' + b64encode(bytes(self.ntc.ntrip_user + ':' + self.ntc.ntrip_pass, "utf-8")).decode("ascii")
-            # 'Authorization': 'Basic ' + b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode("utf-8")).decode("utf-8")
-            'Authorization': 'Basic ' + b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode("utf-8")).decode("utf-8")
-        }
+        header = \
+            F"GET /{self.ntc.ntrip_stream} HTTP/1.1\r\n" +\
+            F"Host: {self.ntc.ntrip_server}\r\n" +\
+            "Ntrip-Version: Ntrip/2.0\r\n" +\
+            "User-Agent: NTRIP ntrip_ros\r\n" +\
+            F"Authorization: Basic {b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode('ascii')).decode('ascii')}\r\n" +\
+            "Connection: close\r\n\r\n"
         dt = datetime.utcnow()
 
-        # patching _read_status
-        # ORIGINAL_HTTP_CLIENT_READ_STATUS = http.client.HTTPResponse._read_status
-        http.client.HTTPResponse._read_status = nice_to_icy
         restart_count = 0
 
         while not self.stop:
@@ -129,48 +125,51 @@ class NtripConnect(Thread):
                 gga = self.checksum(gga)
                 # rospy.loginfo(gga)
 
-                connection = HTTPConnection(
-                    self.ntc.ntrip_server)
+                hostname = self.ntc.ntrip_server.split(':')[0]
+                port = self.ntc.ntrip_server.split(':')[1]
+
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((hostname, int(port)))
 
                 rospy.loginfo("Connection established")
 
-                # now = datetime.datetime.utcnow()
-                # connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
-                #                    (now.hour, now.minute, now.second), headers)
-                # orig
-                # connection.request(
-                #     'GET', '/'+self.ntc.ntrip_stream, gga, headers)
-                connection.request(
-                    'GET', '/'+self.ntc.ntrip_stream, "", headers)
-
+                s.send(header.encode('ascii'))
                 rospy.loginfo("Request sent")
 
                 try:
-                    response = connection.getresponse()
+                    response = s.recv(4096).decode(
+                        'utf-8')  # get all the bytes, make it to string
                 except Exception as exept:
                     print(F"Getresponse excepted with {exept}")
                     raise exept
 
-                # print("Test")
-                # print(response.status)
-                if response.status != 200:
-                    raise Exception(
-                        F"Error: Response not HTTP200 (OK), but {response.status}")  # % response.status)
+                response_lines = response.split("\r\n")
+                for line in response_lines:
+                    if line == "":
+                        pass  # end of header
+                    elif line.find("SOURCETABLE") >= 0:
+                        raise Exception("NTRIP mount point doesn't exist")
+                    elif line.find("401 Unauthorized") >= 0:
+                        raise Exception("Unauthorized request")
+                    elif line.find("404 Not Found") >= 0:
+                        raise Exception("Mount Point does not exist")
+                    elif line.find("ICY 200 OK") >= 0:
+                        pass
+                    elif line.find("HTTP/1.0 200 OK") >= 0:
+                        pass
+                    elif line.find("HTTP/1.1 200 OK") >= 0:
+                        pass
+                    else:
+                        raise Exception(F"Expected an OK code, got {line}")
 
-                # TODO: SEND GGA
+                # send GGA
                 try:
-                    connection.send(gga.encode("utf-8"))
+                    s.sendall(gga.encode("utf-8"))
                 except Exception as exept:
                     print(F"Sending GGA data excepted with {exept}")
                     raise exept
 
                 rospy.loginfo("GGA data sent")
-
-                try:
-                    response = connection.getresponse()
-                except Exception as exept:
-                    print(F"Getresponse excepted with {exept}")
-                    raise exept
 
                 buf = bytes()
                 rmsg = RTCM()
@@ -190,23 +189,23 @@ class NtripConnect(Thread):
 
                     rospy.loginfo("Reading response now:")
                     # This now separates individual RTCM messages and publishes each one on the same topic
-                    data = response.read(1)
+                    data = s.recv(1)
 
                     print(data)
                     if len(data) != 0:
 
                         if data[0] == 211:
                             buf += data
-                            data = response.read(2)
+                            data = s.recv(2)
                             buf += data
                             cnt = data[0] * 256 + data[1]
-                            data = response.read(2)
+                            data = s.recv(2)
                             buf += data
                             typ = (data[0] * 256 + data[1]) / 16
                             print(str(datetime.now()), cnt, typ)
                             cnt = cnt + 1
                             for x in range(cnt):
-                                data = response.read(1)
+                                data = s.recv(1)
                                 buf += data
                             rmsg.message = buf
                             rmsg.header.seq += 1
@@ -215,35 +214,35 @@ class NtripConnect(Thread):
                             buf = bytes()
                         else:
                             print(data)
-                    # else:
-                    #     # If zero length data, close connection and reopen it
-                    #     restart_count = restart_count + 1
-                    #     rospy.logwarn(
-                    #         "Zero length: restart_count = %d", restart_count)
-                    #     connection.close()
+                    else:
+                        # If zero length data, close connection and reopen it
+                        restart_count = restart_count + 1
+                        rospy.logwarn(
+                            "Zero length: restart_count = %d", restart_count)
+                        s.close()
 
-                    #     # connection = HTTPConnection(self.ntc.ntrip_server)
-                    #     # now = datetime.datetime.utcnow()
-                    #     # connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
-                    #     #                    (now.hour, now.minute, now.second), headers)
-                    #     # response = connection.getresponse()
-                    #     # if response.status != 200:
-                    #     #     raise Exception("Error: Response not HTTP200 (OK)")
-                    #     buf = bytes()
-                    #     raise socket.timeout()  # misuse this to get into the outer loop
+                        # connection = HTTPConnection(self.ntc.ntrip_server)
+                        # now = datetime.datetime.utcnow()
+                        # connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
+                        #                    (now.hour, now.minute, now.second), headers)
+                        # response = connection.getresponse()
+                        # if response.status != 200:
+                        #     raise Exception("Error: Response not HTTP200 (OK)")
+                        buf = bytes()
+                        raise socket.timeout()  # misuse this to get into the outer loop
 
-                connection.close()
+                s.close()
 
             except socket.timeout:
                 sleep(0.01)
-                pass  # we'll ignore timeout errors and reconnect
+                # we'll ignore timeout errors and reconnect
             except Exception as exept:
-                print("Request exception `{}`, exiting".format(exept))
+                print(F"Request exception `{exept}`, exiting")
                 break
 
 
 class NtripClient:
-    """ nonempty """
+    """ Ntrip client ros adapter  """
 
     def __init__(self):
         rospy.init_node('ntripclient', anonymous=True)
@@ -268,6 +267,7 @@ class NtripClient:
         self.connection.start()
 
     def run(self):
+        """ """
         rospy.spin()
         if self.connection is not None:
             self.connection.stop = True
