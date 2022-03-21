@@ -3,57 +3,13 @@
 from base64 import b64encode
 from threading import Thread
 import socket
-import re
-import binascii
-
-from datetime import *
-
-
-from http.client import HTTPConnection
-from http.client import IncompleteRead
+import datetime
 
 from time import sleep
 
 import rospy
 # from nmea_msgs.msg import Sentence
 from mavros_msgs.msg import RTCM
-
-
-# This is to fix the IncompleteRead error
-# http://bobrochel.blogspot.com/2010/11/bad-servers-chunked-encoding-and.html
-import http.client
-
-
-def patch_http_response_read(func):
-    """Patching http_response_read to accept incomplete reads"""
-    def inner(*args):
-        try:
-            return func(*args)
-        except http.client.IncompleteRead as e:
-            return e.partial
-    return inner
-
-
-http.client.HTTPResponse.read = patch_http_response_read(
-    http.client.HTTPResponse.read)
-
-ORIGINAL_HTTP_CLIENT_READ_STATUS = http.client.HTTPResponse._read_status  # Function pointer
-
-
-def nice_to_icy(self):
-    """https://stackoverflow.com/questions/4247248/record-streaming-and-saving-internet-radio-in-python
-        Fixing that "ICY 200 OK" doesn't get recognized as ok"""
-    class InterceptedHTTPResponse():
-        """just passing through"""
-        pass
-    import io
-    line = self.fp.readline().replace(
-        b"ICY 200 OK\r\n", b"HTTP/1.0 200 OK\r\n")  # do we even need \r\n??
-    intercepted_self = InterceptedHTTPResponse()
-    intercepted_self.fp = io.BufferedReader(io.BytesIO(line))
-    intercepted_self.debuglevel = self.debuglevel
-    intercepted_self._close_conn = self._close_conn
-    return ORIGINAL_HTTP_CLIENT_READ_STATUS(intercepted_self)
 
 
 class NtripConnect(Thread):
@@ -65,12 +21,17 @@ class NtripConnect(Thread):
         self.stop = False
 
     # Helper functions to create the GPPA string by ourselves
-    def to_dec_minutes(self, degree):
-        """Converts degrees to degree minutes"""
+    def to_dec_minutes(self, degree, is_long=False):
+        """Converts degrees to degree minutes
+        isLong: Boolean. If we have a longitude, an extra digit for degrees is expected"""
         dd = abs(degree)
         minutes, seconds = divmod(dd*3600, 60)
         degrees, minutes = divmod(minutes, 60)
-        return str(int(degrees)) + "{:0>2d}".format(int(minutes)) + "{:8.7f}".format(seconds/60)
+        if is_long:
+            return F"{int(degrees):03d}" + "{:07.4f}".format(int(minutes)+seconds/60)
+        else:
+            return F"{int(degrees):02d}" + "{:07.4f}".format(int(minutes)+seconds/60)
+        # # print(str(int(degrees)) + "{:07.4f}".format(int(minutes)+seconds/60))
 
     def lat_dir(self, latitude):
         """Returns the direction of the latitude (N/S)"""
@@ -90,61 +51,89 @@ class NtripConnect(Thread):
         """ Remove any newlines, calculate XOR checksum and return given sentence with checksum """
         calc_cksum = 0
         for s in sentence:
-            calc_cksum ^= ord(s)
+            calc_cksum = calc_cksum ^ ord(s)
         # Return the nmeadata, the checksum from
         # sentence, and the calculated checksum
-        return sentence + "*" + hex(calc_cksum)[2:]
+        return sentence + F"*{calc_cksum:02X}\r\n"
+
+    def generate_gga_string(self):
+        """Generates the GGA string to tell the base where we are
+        fields:
+        Message ID:     $GPGGA
+        UTC Time:       hhmmss.sss
+        Latitude:       ddmm.mmmm
+        N/S Indicator:  N=North, S=South
+        Longitude:      dddmm.mmmm
+        E/W Indicator:  E=East, W=West
+        Pos Fix Ind:    should always be 1
+        Sats used:      should always be 10 (or some number)
+        HDOP:           Just use 1
+        MSL Altitude:   We might need to calculate that or so
+        Alt Unit:       M for meters
+        Geoid seperation: 0
+        Geoid Unit:     M for meters
+        Age of diff corr: use 0.0
+        ref station id: 0
+        Checksum:       XOR-Checksum
+        all fields are comma-seperated, except for the checksum, that uses a '*'
+        """
+        dt = datetime.datetime.utcnow()
+
+        gga = F"GPGGA,{dt.hour:0>2d}{dt.minute:0>2d}{dt.second:0>2d}.{int(dt.microsecond / 10000):0>2d}"
+        gga += ',' +\
+            self.to_dec_minutes(self.ntc.latitude) +\
+            ',' + self.lat_dir(self.ntc.latitude)
+        gga += ',' +\
+            self.to_dec_minutes(degree=self.ntc.longitude, is_long=True) +\
+            ',' + self.long_dir(self.ntc.longitude)
+        gga += F',1,10,1.0,{self.ntc.altitude:.2f},M,0,M,0.0,0'
+        gga = "$"+self.checksum(gga)
+        return gga
 
     # Function actually doing stuff
     def run(self):
         # print(self.ntc.ntrip_user)
         # print(self.ntc.ntrip_pass)
-        header = \
-            F"GET /{self.ntc.ntrip_stream} HTTP/1.1\r\n" +\
+        header = F"GET /{self.ntc.ntrip_stream} HTTP/1.1\r\n" +\
             F"Host: {self.ntc.ntrip_server}\r\n" +\
             "Ntrip-Version: Ntrip/2.0\r\n" +\
             "User-Agent: NTRIP ntrip_ros\r\n" +\
             F"Authorization: Basic {b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode('ascii')).decode('ascii')}\r\n" +\
             "Connection: close\r\n\r\n"
-        dt = datetime.utcnow()
 
         restart_count = 0
 
         while not self.stop:
             try:
-                gga = "$GPGGA,{:0>2d}".format(dt.hour) + "{:0>2d}".format(dt.minute) + "{:0>2d}".format(
-                    dt.second) + ".{:0>2d}".format(int(dt.microsecond / 10000))
-                gga += ',' + \
-                    self.to_dec_minutes(self.ntc.latitude) + \
-                    ',' + self.lat_dir(self.ntc.latitude)
-                gga += ',' + \
-                    self.to_dec_minutes(self.ntc.longitude) + \
-                    ',' + self.long_dir(self.ntc.longitude)
-                gga += ',1,10,1.2,{:.4f},M,-2.860,M,,0000'.format(
-                    self.ntc.altitude)
-                gga = self.checksum(gga)
+                gga = self.generate_gga_string()
                 # rospy.loginfo(gga)
 
                 hostname = self.ntc.ntrip_server.split(':')[0]
                 port = self.ntc.ntrip_server.split(':')[1]
 
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.connect((hostname, int(port)))
+
+                try:
+                    s.connect((hostname, int(port)))
+                except Exception as excep:
+                    print(F"Connect failed with {excep}")
+                    raise
 
                 rospy.loginfo("Connection established")
 
-                s.send(header.encode('ascii'))
+                s.sendall(header.encode('ascii'))
                 rospy.loginfo("Request sent")
 
                 try:
-                    response = s.recv(4096).decode(
-                        'utf-8')  # get all the bytes, make it to string
-                except Exception as exept:
-                    print(F"Getresponse excepted with {exept}")
-                    raise exept
+                    # get all the bytes, make it to string
+                    response = s.recv(4096)
+                except Exception as excep:
+                    print(F"Getresponse excepted with {excep}")
+                    raise excep
 
-                response_lines = response.split("\r\n")
+                response_lines = response.decode('utf-8').split("\r\n")
                 for line in response_lines:
+                    print("'" + line+"'")
                     if line == "":
                         pass  # end of header
                     elif line.find("SOURCETABLE") >= 0:
@@ -164,7 +153,7 @@ class NtripConnect(Thread):
 
                 # send GGA
                 try:
-                    s.sendall(gga.encode("utf-8"))
+                    s.sendall(bytes(gga, "ascii"))  # ("utf-8"))
                 except Exception as exept:
                     print(F"Sending GGA data excepted with {exept}")
                     raise exept
@@ -202,7 +191,7 @@ class NtripConnect(Thread):
                             data = s.recv(2)
                             buf += data
                             typ = (data[0] * 256 + data[1]) / 16
-                            print(str(datetime.now()), cnt, typ)
+                            print(str(datetime.datetime.now()), cnt, typ)
                             cnt = cnt + 1
                             for x in range(cnt):
                                 data = s.recv(1)
@@ -267,7 +256,7 @@ class NtripClient:
         self.connection.start()
 
     def run(self):
-        """ """
+        """ run this class """
         rospy.spin()
         if self.connection is not None:
             self.connection.stop = True
