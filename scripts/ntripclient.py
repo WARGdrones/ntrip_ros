@@ -176,13 +176,11 @@ class NtripConnect(Thread):
                     # else: buf += data
                     # '''
 
-                    rospy.loginfo("Reading response now:")
+                    # rospy.loginfo("Reading response now:")
                     # This now separates individual RTCM messages and publishes each one on the same topic
                     data = s.recv(1)
 
-                    print(data)
                     if len(data) != 0:
-
                         if data[0] == 211:
                             buf += data
                             data = s.recv(2)
@@ -191,12 +189,12 @@ class NtripConnect(Thread):
                             data = s.recv(2)
                             buf += data
                             typ = (data[0] * 256 + data[1]) / 16
-                            print(str(datetime.datetime.now()), cnt, typ)
+                            # rospy.loginfo(str(datetime.datetime.now()), cnt, typ)
                             cnt = cnt + 1
                             for x in range(cnt):
                                 data = s.recv(1)
                                 buf += data
-                            rmsg.message = buf
+                            rmsg.data = buf
                             rmsg.header.seq += 1
                             rmsg.header.stamp = rospy.get_rostime()
                             self.ntc.pub.publish(rmsg)
