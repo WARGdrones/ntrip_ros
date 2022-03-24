@@ -9,6 +9,8 @@ find_package(catkin REQUIRED COMPONENTS
 #  nmea_msgs
   rospy
   std_msgs
+  message_generation
+  hub_control_interface
 )
 
 ## System dependencies are found with CMake's conventions
@@ -52,11 +54,12 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate services in the 'srv' folder
-# add_service_files(
-#   FILES
+add_service_files(
+  FILES
+  ProvideRTCM.srv
 #   Service1.srv
 #   Service2.srv
-# )
+)
 
 ## Generate actions in the 'action' folder
 # add_action_files(
@@ -66,10 +69,11 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
+generate_messages(
+  DEPENDENCIES
+  std_msgs
 #   nmea_msgs#   rtcm_msgs#   std_msgs
-# )
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -104,6 +108,7 @@ catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ntrip_ros
 #  CATKIN_DEPENDS nmea_msgs rospy rtcm_msgs std_msgs
+CATKIN_DEPENDS message_runtime hub_control_interface
 #  DEPENDS system_lib
 )
 

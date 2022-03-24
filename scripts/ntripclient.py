@@ -10,6 +10,8 @@ from time import sleep
 import rospy
 # from nmea_msgs.msg import Sentence
 from mavros_msgs.msg import RTCM
+from hub_control_interface.msg import HubState
+from ntrip_ros.srv import ProvideRTCM
 
 
 class NtripConnect(Thread):
@@ -92,8 +94,6 @@ class NtripConnect(Thread):
 
     # Function actually doing stuff
     def run(self):
-        # print(self.ntc.ntrip_user)
-        # print(self.ntc.ntrip_pass)
         header = F"GET /{self.ntc.ntrip_stream} HTTP/1.1\r\n" +\
             F"Host: {self.ntc.ntrip_server}\r\n" +\
             "Ntrip-Version: Ntrip/2.0\r\n" +\
@@ -189,7 +189,7 @@ class NtripConnect(Thread):
                             data = s.recv(2)
                             buf += data
                             typ = (data[0] * 256 + data[1]) / 16
-                            # rospy.loginfo(str(datetime.datetime.now()), cnt, typ)
+                            # rospy.loginfo(F"{cnt}, {int(typ)}")
                             cnt = cnt + 1
                             for x in range(cnt):
                                 data = s.recv(1)
@@ -207,14 +207,6 @@ class NtripConnect(Thread):
                         rospy.logwarn(
                             "Zero length: restart_count = %d", restart_count)
                         s.close()
-
-                        # connection = HTTPConnection(self.ntc.ntrip_server)
-                        # now = datetime.datetime.utcnow()
-                        # connection.request('GET', '/'+self.ntc.ntrip_stream, self.ntc.nmea_gga %
-                        #                    (now.hour, now.minute, now.second), headers)
-                        # response = connection.getresponse()
-                        # if response.status != 200:
-                        #     raise Exception("Error: Response not HTTP200 (OK)")
                         buf = bytes()
                         raise socket.timeout()  # misuse this to get into the outer loop
 
@@ -243,15 +235,39 @@ class NtripClient:
         self.ntrip_pass = rospy.get_param('~ntrip_pass')
         self.ntrip_stream = rospy.get_param('~ntrip_stream')
 
-        self.latitude = rospy.get_param('~latitude')
-        self.longitude = rospy.get_param('~longitude')
-        self.altitude = rospy.get_param('~altitude')
+        rospy.loginfo("Waiting for hub/state to know current position")
+        hub_state = rospy.wait_for_message(
+            topic="hub/state", topic_type=HubState)
+
+        self.latitude = hub_state.position.latitude
+        self.longitude = hub_state.position.longitude
+        self.altitude = hub_state.position.altitude
+        rospy.loginfo("Got position")
 
         self.pub = rospy.Publisher(self.rtcm_topic, RTCM, queue_size=10)
 
+        self.provide_service = rospy.Service(
+            'provide_rtcm', ProvideRTCM, self.handle_provide_rtcm)
+
         self.connection = None
-        self.connection = NtripConnect(self)
-        self.connection.start()
+
+    def handle_provide_rtcm(self, req):
+        """Handles starting and stopping of RTCM sending """
+        if req.on:
+            if self.connection is None or self.connection.stop:
+                self.connection = NtripConnect(self)
+                self.connection.start()
+                rospy.loginfo("Providing rtcm started")
+                return {"error_code": 0, "error_message": "ok"}
+            else:
+                return {"error_code": 1, "error_message": "RTCM is already running"}
+        else:
+            if self.connection is not None and not self.connection.stop:
+                self.connection.stop = True
+                rospy.loginfo("Providing rtcm stopped")
+                return {"error_code": 0, "error_message": "ok"}
+            else:
+                return {"error_code": 1, "error_message": "RTCM is not running, can't stop"}
 
     def run(self):
         """ run this class """

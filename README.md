@@ -21,3 +21,6 @@ A similar NTRIP client (may be better than mine) is here: https://github.com/day
 - merged https://github.com/dayjaby/ntrip_ros to only use mavros builtin messages
 - python3 changes from https://github.com/Autonabit/ntrip_ros
 - calculating GGA message instead of using a fixed one: https://github.com/duwke/ntrip_ros/
+- Also fixing the GGA-String generation (the checksum calculation was wrong)
+- (The node will expect all the necessary data to be in env variables or provided in hub_state, we are running it inside of docker)
+- Expanded by starting and stopping from inside ROS
