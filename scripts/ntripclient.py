@@ -19,6 +19,8 @@ class NtripConnect(Thread):
 
     def __init__(self, ntc):
         super(NtripConnect, self).__init__()
+        if (ntc.ntrip_user is None or ntc.ntrip_user == "<fill in>"):
+            raise Exception("no user data given")
         self.ntc = ntc
         self.stop = False
 
@@ -230,10 +232,10 @@ class NtripClient:
             '~rtcm_topic', 'mavros/gps_rtk/send_rtcm')
         self.nmea_topic = rospy.get_param('~nmea_topic', 'nmea')
 
-        self.ntrip_server = rospy.get_param('~ntrip_server')
-        self.ntrip_user = rospy.get_param('~ntrip_user')
-        self.ntrip_pass = rospy.get_param('~ntrip_pass')
-        self.ntrip_stream = rospy.get_param('~ntrip_stream')
+        self.ntrip_server = rospy.get_param('~ntrip_server', None)
+        self.ntrip_user = rospy.get_param('~ntrip_user', None)
+        self.ntrip_pass = rospy.get_param('~ntrip_pass', None)
+        self.ntrip_stream = rospy.get_param('~ntrip_stream', None)
 
         rospy.loginfo("Waiting for hub/state to know current position")
         hub_state = rospy.wait_for_message(
