@@ -13,6 +13,8 @@ from mavros_msgs.msg import RTCM
 from hub_control_interface.msg import HubState
 from ntrip_ros.srv import ProvideRTCM
 
+verbose = False
+
 
 class NtripConnect(Thread):
     """Creating a ntrip connection"""
@@ -121,10 +123,12 @@ class NtripConnect(Thread):
                     print(F"Connect failed with {excep}")
                     raise
 
-                rospy.loginfo("Connection established")
+                if verbose:
+                    rospy.loginfo("Connection established")
 
                 s.sendall(header.encode('ascii'))
-                rospy.loginfo("Request sent")
+                if verbose:
+                    rospy.loginfo("Request sent")
 
                 try:
                     # get all the bytes, make it to string
@@ -135,7 +139,8 @@ class NtripConnect(Thread):
 
                 response_lines = response.decode('utf-8').split("\r\n")
                 for line in response_lines:
-                    print("'" + line+"'")
+                    if verbose:
+                        print("'" + line+"'")
                     if line == "":
                         pass  # end of header
                     elif line.find("SOURCETABLE") >= 0:
@@ -160,7 +165,8 @@ class NtripConnect(Thread):
                     print(F"Sending GGA data excepted with {exept}")
                     raise exept
 
-                rospy.loginfo("GGA data sent")
+                if verbose:
+                    rospy.loginfo("GGA data sent")
 
                 buf = bytes()
                 rmsg = RTCM()
@@ -244,7 +250,8 @@ class NtripClient:
         self.latitude = hub_state.position.latitude
         self.longitude = hub_state.position.longitude
         self.altitude = hub_state.position.altitude
-        rospy.loginfo("Got position")
+        if verbose:
+            rospy.loginfo("Got position")
 
         self.pub = rospy.Publisher(self.rtcm_topic, RTCM, queue_size=10)
 
