@@ -14,6 +14,7 @@ from hub_control_interface.msg import HubState
 from ntrip_ros.srv import ProvideRTCM
 
 verbose = False
+#verbose = True
 
 
 class NtripConnect(Thread):
@@ -25,6 +26,7 @@ class NtripConnect(Thread):
             raise Exception("no user data given")
         self.ntc = ntc
         self.stop = False
+        self.sock = None
 
     # Helper functions to create the GPPA string by ourselves
     def to_dec_minutes(self, degree, is_long=False):
@@ -96,12 +98,26 @@ class NtripConnect(Thread):
         gga = "$"+self.checksum(gga)
         return gga
 
+    def gga_worker(self):
+        """Sending out gga strings regularly"""
+        while not self.stop:
+            sleep(10)  # every 10 seconds send gga string
+            gga = self.generate_gga_string()
+            try:
+                self.sock.sendall(bytes(gga, "ascii"))  # ("utf-8"))
+            except Exception as exept:
+                print(F"Sending GGA data excepted with {exept}")
+                raise exept
+
+            if verbose:
+                rospy.loginfo("GGA data sent")
+
     # Function actually doing stuff
     def run(self):
         header = F"GET /{self.ntc.ntrip_stream} HTTP/1.1\r\n" +\
             F"Host: {self.ntc.ntrip_server}\r\n" +\
             "Ntrip-Version: Ntrip/2.0\r\n" +\
-            "User-Agent: NTRIP ntrip_ros\r\n" +\
+            "User-Agent: NTRIP ntrip_wd\r\n" +\
             F"Authorization: Basic {b64encode((self.ntc.ntrip_user + ':' + str(self.ntc.ntrip_pass)).encode('ascii')).decode('ascii')}\r\n" +\
             "Connection: close\r\n\r\n"
 
@@ -115,10 +131,10 @@ class NtripConnect(Thread):
                 hostname = self.ntc.ntrip_server.split(':')[0]
                 port = self.ntc.ntrip_server.split(':')[1]
 
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
                 try:
-                    s.connect((hostname, int(port)))
+                    self.sock.connect((hostname, int(port)))
                 except Exception as excep:
                     print(F"Connect failed with {excep}")
                     raise
@@ -126,18 +142,20 @@ class NtripConnect(Thread):
                 if verbose:
                     rospy.loginfo("Connection established")
 
-                s.sendall(header.encode('ascii'))
+                self.sock.sendall(header.encode('ascii'))
                 if verbose:
                     rospy.loginfo("Request sent")
 
                 try:
                     # get all the bytes, make it to string
-                    response = s.recv(4096)
+                    response = self.sock.recv(4096)
                 except Exception as excep:
                     print(F"Getresponse excepted with {excep}")
                     raise excep
 
                 response_lines = response.decode('utf-8').split("\r\n")
+                if verbose:
+                    print("Initial response:")
                 for line in response_lines:
                     if verbose:
                         print("'" + line+"'")
@@ -160,13 +178,17 @@ class NtripConnect(Thread):
 
                 # send GGA
                 try:
-                    s.sendall(bytes(gga, "ascii"))  # ("utf-8"))
+                    self.sock.sendall(bytes(gga, "ascii"))  # ("utf-8"))
                 except Exception as exept:
                     print(F"Sending GGA data excepted with {exept}")
                     raise exept
 
                 if verbose:
                     rospy.loginfo("GGA data sent")
+
+                    # continue sending GGA data
+                gga_sender_thread = Thread(target=self.gga_worker)
+                gga_sender_thread.start()
 
                 buf = bytes()
                 rmsg = RTCM()
@@ -186,21 +208,21 @@ class NtripConnect(Thread):
 
                     # rospy.loginfo("Reading response now:")
                     # This now separates individual RTCM messages and publishes each one on the same topic
-                    data = s.recv(1)
+                    data = self.sock.recv(1)
 
                     if len(data) != 0:
                         if data[0] == 211:
                             buf += data
-                            data = s.recv(2)
+                            data = self.sock.recv(2)
                             buf += data
                             cnt = data[0] * 256 + data[1]
-                            data = s.recv(2)
+                            data = self.sock.recv(2)
                             buf += data
                             typ = (data[0] * 256 + data[1]) / 16
                             # rospy.loginfo(F"{cnt}, {int(typ)}")
                             cnt = cnt + 1
                             for x in range(cnt):
-                                data = s.recv(1)
+                                data = self.sock.recv(1)
                                 buf += data
                             rmsg.data = buf
                             rmsg.header.seq += 1
@@ -214,11 +236,12 @@ class NtripConnect(Thread):
                         restart_count = restart_count + 1
                         rospy.logwarn(
                             "Zero length: restart_count = %d", restart_count)
-                        s.close()
+                        self.sock.close()
                         buf = bytes()
                         raise socket.timeout()  # misuse this to get into the outer loop
 
-                s.close()
+                self.sock.close()
+                self.sock = None
 
             except socket.timeout:
                 sleep(0.01)
@@ -243,13 +266,17 @@ class NtripClient:
         self.ntrip_pass = rospy.get_param('~ntrip_pass', None)
         self.ntrip_stream = rospy.get_param('~ntrip_stream', None)
 
-        rospy.loginfo("Waiting for hub/state to know current position")
+        if verbose:
+            rospy.loginfo("Waiting for hub/state to know current position")
         hub_state = rospy.wait_for_message(
             topic="hub/state", topic_type=HubState)
 
         self.latitude = hub_state.position.latitude
         self.longitude = hub_state.position.longitude
         self.altitude = hub_state.position.altitude
+        # self.latitude = 53.156192
+        # self.longitude = 8.164861
+        # self.altitude = 0
         if verbose:
             rospy.loginfo("Got position")
 
