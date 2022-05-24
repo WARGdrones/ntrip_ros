@@ -4,6 +4,7 @@ from base64 import b64encode
 from threading import Thread
 import socket
 import datetime
+import math
 
 from time import sleep
 
@@ -12,6 +13,8 @@ import rospy
 from mavros_msgs.msg import RTCM
 from hub_control_interface.msg import HubState
 from ntrip_ros.srv import ProvideRTCM
+
+# for RTCM3 infos: https://github.com/ArduPilot/MissionPlanner/blob/master/ExtLibs/Utilities/rtcm3.cs
 
 verbose = False
 #verbose = True
@@ -27,6 +30,7 @@ class NtripConnect(Thread):
         self.ntc = ntc
         self.stop = False
         self.sock = None
+        self.seenMsgsDict = {}
 
     # Helper functions to create the GPPA string by ourselves
     def to_dec_minutes(self, degree, is_long=False):
@@ -100,8 +104,8 @@ class NtripConnect(Thread):
 
     def gga_worker(self):
         """Sending out gga strings regularly"""
+        sleep(10)  # every 10 seconds send gga string
         while not self.stop:
-            sleep(10)  # every 10 seconds send gga string
             gga = self.generate_gga_string()
             try:
                 self.sock.sendall(bytes(gga, "ascii"))  # ("utf-8"))
@@ -111,6 +115,11 @@ class NtripConnect(Thread):
 
             if verbose:
                 rospy.loginfo("GGA data sent")
+                rospy.loginfo("seen messages thus far: ")
+                for i in self.seenMsgsDict:
+                    rospy.loginfo(F"{i}: {self.seenMsgsDict[i]}")
+
+            sleep(10)  # every 10 seconds send gga string
 
     # Function actually doing stuff
     def run(self):
@@ -211,15 +220,27 @@ class NtripConnect(Thread):
                     data = self.sock.recv(1)
 
                     if len(data) != 0:
+                        # 211 (==0xD3==0b11010011) is the RTCM3 preamble byte
+                        # *256 is left-shift by 8
+                        # /16 is right-shift by 4
                         if data[0] == 211:
                             buf += data
+                            # it is followed by 6 bits of reserved space and
+                            # 10 bits of length information (thus 2 bytes):
                             data = self.sock.recv(2)
                             buf += data
                             cnt = data[0] * 256 + data[1]
+                            # then follows the actual packet, first with the message number as a uint12:
                             data = self.sock.recv(2)
                             buf += data
-                            typ = (data[0] * 256 + data[1]) / 16
+                            msg_type = math.floor(
+                                (data[0] * 256 + data[1]) / 16)
                             # rospy.loginfo(F"{cnt}, {int(typ)}")
+                            # rospy.loginfo(F"Message type: {int(msg_type)}")
+                            if msg_type in self.seenMsgsDict:
+                                self.seenMsgsDict[msg_type] += 1
+                            else:
+                                self.seenMsgsDict[msg_type] = 1
                             cnt = cnt + 1
                             for x in range(cnt):
                                 data = self.sock.recv(1)
