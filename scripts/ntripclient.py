@@ -16,6 +16,47 @@ from ntrip_ros.srv import ProvideRTCM
 
 # for RTCM3 infos: https://github.com/ArduPilot/MissionPlanner/blob/master/ExtLibs/Utilities/rtcm3.cs
 
+# Currently, we are getting the following data from SAPOS:
+# 1021: 622 -> Helmet/Abridged Molodenski Message (Transformation parameter information)
+# 1025: 622 -> Projection Parameters Message (Transformation parameter information)
+# 1023: 622 -> Representation Residual Message (Transformation parameter information)
+# 1013: 623 -> System Parameters (Auxiliary Operation Information)
+# 1006: 623 -> Station Coordinates (1)
+# 1032: 623 -> Station Coordinates (3)
+# 1033: 623 -> Receiver and Antenna Description
+# 1008: 623 -> Antenna Description
+# 1030: 208 -> GPS Network RTK Residual Message (Network RTK Corrections)
+# 1031: 623 -> GLONASS Network RTK Residual Message (Network RTK Corrections)
+# 1074: 6227 -> GPS MSM4 (Full GPS Pseudoranges and PhaseRanges plus CNR)
+# 1094: 6227 -> Galileo MSM4 (Full GALILEO Pseudoranges and PhaseRanges plus CNR)
+# 1124: 6227 -> BeiDou MSM4 (Full BeiDou Pseudoranges and PhaseRanges plus CNR)
+
+# M8P Doesn't support Galileo, but GLONASS -- how do we get that?
+# M8P supports and wants 1230 for GLONASS -> Do we need to do anything to get it?
+# M8P supported messages:(maybe add a 1033 or 1008 -> 1007 conversion)
+# 1001 -> GPS L1 observations
+# 1002 -> GPS L1 observations
+# 1003 -> GPS L1/L2 observations
+# 1004 -> GPS L1/L2 observations
+# 1005 -> Station coordinates
+# 1006 -> Station coordinates
+# 1007 -> Station antenna information
+# 1009 -> GLONASS L1 observations
+# 1010 -> GLONASS L1 observations
+# 1011 -> GLONASS L1/L2 observations
+# 1012 -> GLONASS L1/L2 observations
+# 1074 -> MSM4 GPS observations
+# 1075 -> MSM5 GPS observations
+# 1077 -> MSM7 GPS observations
+# 1084 -> MSM4 GLONASS observations
+# 1085 -> MSM5 GLONASS observations
+# 1087 -> MSM7 GLONASS observations
+# 1124 -> MSM4 BeiDou observations
+# 1125 -> MSM5 BeiDou observations
+# 1127 -> MSM7 BeiDou observations
+# 1230 -> GLONASS code-phase biases
+# 4072 -> Reference station PVT (u-blox proprietary RTCM Message)
+
 verbose = False
 #verbose = True
 
